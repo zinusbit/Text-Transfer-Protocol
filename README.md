@@ -1,164 +1,97 @@
-# TTP0 — Text Transfer Protocol v0
+# TTP0 - Text Transfer Protocol v0
 
-*A tiny, teaching-grade protocol for sending text with a checksum. Built for learning, not production.*
+A simple custom protocol that wraps a text message in a binary frame with a CRC16 checksum so a receiver can verify the message arrived intact.
 
----
-
-## TL;DR
-
-This is a **toy protocol** that wraps a text message in a binary frame:
+## Frame Format
 
 ```
-TTP0 + length + your-text + CRC16
+TTP0 + length + text + CRC16
 ```
 
-Run it:
-```bash
-python src/main.py
-# type something, hit enter
-# see the framed bytes
+```
+┌─────────────┬────────┬──────────────┬──────────────┐
+│  "TTP0"     │ length │  text        │  CRC16       │
+│  (4 bytes)  │(1 byte)│  (N bytes)   │  (2 bytes)   │
+└─────────────┴────────┴──────────────┴──────────────┘
 ```
 
----
+| Field | Size | Description |
+|-------|------|-------------|
+| `TTP0` | 4 bytes | Protocol magic `0x54 0x54 0x50 0x30` ("TTP0"). Identifies this as a TTP0 frame. |
+| `length` | 1 byte | Length of the text payload in bytes (big-endian, max 255). |
+| `text` | N bytes | The message, UTF-8 encoded. |
+| `CRC16` | 2 bytes | CRC-16/IBM checksum of `TTP0 + length + text`, big-endian (high byte first). |
 
-## Why This Exists
+### Example
 
-Someone (maybe you?) wanted to understand how real protocols work under the hood. So they built the simplest possible thing that still has:
-
-- **A magic number** — so receivers know "this is TTP0, not JSON or protobuf"
-- **A length field** — so you know when the message ends
-- **A checksum (CRC-16)** — so you can detect corruption
-
-That's it. No headers, no handshakes, no retries. Just framing.
-
----
-
-## The Frame (On the Wire)
+Message: `Hi` (2 bytes)
 
 ```
-┌─────────────┬───────┬────────────┬──────────┐
-│  "TTP0"     │ len   │  payload   │  CRC16   │
-│  (4 bytes)  │(1 B)  │  (N bytes) │ (2 bytes)│
-└─────────────┴───────┴────────────┴──────────┘
+54 54 50 30 02 48 69 <CRC_hi> <CRC_lo>
+└──────────┘ └┘ └────┘ └──────────┘
+  TTP0     len  "Hi"    CRC16
 ```
 
-| Bytes | Meaning |
-|-------|---------|
-| `54 54 50 30` | ASCII `"TTP0"` — protocol ID |
-| `0C` | Length = 12 bytes |
-| `48 65 6C 6C 6F...` | Your UTF-8 text |
-| `1A 2B` | CRC-16 (big-endian) |
+## How It Works
 
-**Example:** `"Hello world!"` (12 bytes) → `54 54 50 30 0C 48 65 6C 6C 6F 20 77 6F 72 6C 64 21 1A 2B`
+1. Read a line of text from stdin.
+2. Encode it as UTF-8 and measure its length.
+3. Build the frame **without** CRC: `TTP0 + length + text`.
+4. Run CRC-16/IBM over those bytes.
+5. Split the 16-bit CRC into a high byte and low byte.
+6. Append them to build the final frame: `TTP0 + length + text + CRC16`.
+7. Print the frame bytes.
 
----
+## CRC-16/IBM
 
-## What's In The Code
+The `CRC16` class implements CRC-16/IBM with these defaults:
 
-### `src/main.py` — The Whole Thing (~80 lines)
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| `polynomial` | `0xA001` | Generator polynomial (reversed `0x8005`). |
+| `init` | `0xFFFF` | Starting CRC value. |
+| `xor_out` | `0x0000` | Final XOR applied to the CRC. |
 
-| Part | What It Does |
-|------|--------------|
-| `CRC16` class | Lookup-table CRC-16/IBM (poly `0xA001`). Fast, standard. |
-| `NoChars` | Exception for empty messages. |
-| `checkbuffer(len)` | Throws if length is 0. |
-| `framebuildernocrc(...)` | Builds frame *without* CRC (used to calculate the CRC). |
-| `framebuilder(...)` | Builds the full frame **but has a bug** (returns the function, not the frame). |
-| Bottom 20 lines | Demo: reads stdin, frames it, prints debug info. |
-
-### `src/text.txt` — Just a Sample
-
-```
-Hello world!!!!!!!!!!!!!!!!!!
-I am soooo exiteddd
-```
-
-Not used by the code. Just sits there.
-
----
-
-## Known Bugs (Patches Welcome)
-
-1. **Line 57**: `return framebuilder` → should be `return frame`
-2. **Line 43**: `return MESSAGE` → `MESSAGE` doesn't exist in that scope
-3. **31-char warning** is misleading — protocol supports 255 bytes (1-byte length)
-
----
-
-## Try It
-
-```bash
-cd /home/zxldsh/Documents/real_projects/assembly
-python src/main.py
-```
-
-Type: `Hi there!`
-
-Output:
-```
-b'TTP0\x09Hi there!'
-<class 'bytes'>
-<class 'int'>
-<class 'bytes'>
-<class '__main__.CRC16'>
-you can only put 31 characters in the buffer
-
-b'TTP0\x09Hi there!\x8f\xc3'
-```
-
-The last line is your framed message with CRC appended.
-
----
-
-## Extending It (Ideas)
-
-### Add a Parser
+It uses a precomputed 256-entry lookup table for speed. Typical use:
 
 ```python
-def parse_ttp0(frame: bytes) -> str:
-    if frame[:4] != b"TTP0":
-        raise ValueError("Bad magic")
-    length = frame[4]
-    payload = frame[5:5+length]
-    got_crc = int.from_bytes(frame[5+length:7+length], "big")
-    
-    crc = CRC16()
-    crc.update(frame[:5+length])
-    if crc.digest() != got_crc:
-        raise ValueError("CRC mismatch")
-    
-    return payload.decode("utf-8")
+crc = CRC16()
+crc.update(frame_without_crc)
+value = crc.digest()      # int, 0..65535
+crc.hexdigest()           # e.g. "8F3A"
 ```
 
-### Support Bigger Messages
+## Code Reference (`src/main.py`)
 
-Change `to_bytes(1, "big")` → `to_bytes(2, "big")` for 64KB payloads.
+| Name | Purpose |
+|------|---------|
+| `CRC16` | CRC-16/IBM class. Methods: `reset()`, `update(data)`, `digest()`, `hexdigest()`. |
+| `NoChars` | Exception raised when the message is empty. |
+| `checkbuffer(MSGLEN)` | Raises `NoChars` if `MSGLEN == 0`, otherwise returns the message. |
+| `framebuildernocrc(PRTV, MSGLint, MSG)` | Builds `PRTV + MSGLbytes + MSG` (no CRC) and returns those bytes. Used to compute the CRC. |
+| `framebuilder(PRTV, MSGLint, MSG, CRCint_high, CRCint_low)` | Builds the full frame with the two CRC bytes appended. |
+| `PROTOCOL_VERSION` | The magic bytes `0x54 0x54 0x50 0x30`. |
+| `MESSAGE` / `UTF8MSG` / `MSGLEN` | Input text, its UTF-8 bytes, and its length. |
 
-### Add Message Types
+## Run
 
-First payload byte = type:
+```bash
+python src/main.py
 ```
-TTP0 | len | type | payload... | CRC
+
+Type a message and press enter. The program prints debug type info and the final framed bytes, e.g.:
+
+```
+b'TTP0\x02Hi\x8f\xc3'
 ```
 
----
+## Notes & Known Issues
 
-## Philosophy
+- `checkbuffer` returns `MESSAGE` (a global), not `MSGLEN`; it only validates the length.
+- `framebuilder` returns the function `framebuilder` instead of the `frame` it built.
+- The "31 characters" message is misleading: a 1-byte length field allows up to 255 bytes.
 
-> **Make it work, make it right, make it fast.** — Kent Beck
+## Files
 
-This is *make it work* stage. It teaches the bones of every protocol you'll ever meet: **magic, length, payload, checksum**. HTTP, MQTT, CAN, USB — same skeleton, more flesh.
-
----
-
-## License
-
-None. Public domain vibes. Copy, break, learn.
-
----
-
-*Built for curiosity. Not for production.*
-
----
-
-> **Note:** This README was generated by an AI assistant. The code in `src/main.py` and `src/text.txt` is human-written.
+- `src/main.py` - Protocol implementation.
+- `src/text.txt` - Sample text.
