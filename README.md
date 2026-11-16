@@ -1,75 +1,164 @@
-# TTP0 - Text Transfer Protocol v0
+# TTP0 — Text Transfer Protocol v0
 
-A minimal custom text transfer protocol implementation in Python.
+*A tiny, teaching-grade protocol for sending text with a checksum. Built for learning, not production.*
 
-## Protocol Overview
+---
 
-TTP0 (Text Transfer Protocol version 0) is a simple wire protocol for transferring text messages. Each message is framed with a protocol magic identifier, length byte, payload, and a CRC byte.
+## TL;DR
 
-## Frame Format
-
-Each TTP0 frame consists of:
+This is a **toy protocol** that wraps a text message in a binary frame:
 
 ```
-[PROTOCOL_VERSION: 4 bytes][MSGLEN: 1 byte][MSG: variable][CRC: 1 byte]
+TTP0 + length + your-text + CRC16
 ```
 
-| Field | Size | Description |
-|-------|------|-------------|
-| PROTOCOL_VERSION | 4 bytes | Magic identifier `0x54 0x54 0x50 0x30` ("TTP0") |
-| MSGLEN | 1 byte | Length of the message payload in bytes (big-endian) |
-| MSG | variable | UTF-8 encoded message payload |
-| CRC | 1 byte | Checksum byte (currently fixed value `12`) |
+Run it:
+```bash
+python src/main.py
+# type something, hit enter
+# see the framed bytes
+```
 
-## Components
+---
 
-### Constants
+## Why This Exists
 
-- `PROTOCOL_VERSION` - Magic bytes identifying the protocol (`0x54, 0x54, 0x50, 0x30`)
-- `CRC` - Checksum value (fixed at `12`)
+Someone (maybe you?) wanted to understand how real protocols work under the hood. So they built the simplest possible thing that still has:
 
-### Exceptions
+- **A magic number** — so receivers know "this is TTP0, not JSON or protobuf"
+- **A length field** — so you know when the message ends
+- **A checksum (CRC-16)** — so you can detect corruption
 
-- `NoChars` - Raised when an empty message (length 0) is passed to the buffer check
+That's it. No headers, no handshakes, no retries. Just framing.
 
-### Functions
+---
 
-#### `checkbuffer(MSGLEN)`
-Validates that the message buffer is not empty.
+## The Frame (On the Wire)
 
-- **Parameters:** `MSGLEN` (int) - Length of the message
-- **Returns:** The message string if valid
-- **Raises:** `NoChars` if `MSGLEN == 0`
+```
+┌─────────────┬───────┬────────────┬──────────┐
+│  "TTP0"     │ len   │  payload   │  CRC16   │
+│  (4 bytes)  │(1 B)  │  (N bytes) │ (2 bytes)│
+└─────────────┴───────┴────────────┴──────────┘
+```
 
-#### `framebuilder(PRTV, MSGLint, MSG, CRCint)`
-Constructs a TTP0 frame from the individual components.
+| Bytes | Meaning |
+|-------|---------|
+| `54 54 50 30` | ASCII `"TTP0"` — protocol ID |
+| `0C` | Length = 12 bytes |
+| `48 65 6C 6C 6F...` | Your UTF-8 text |
+| `1A 2B` | CRC-16 (big-endian) |
 
-- **Parameters:**
-  - `PRTV` (bytes) - Protocol version magic bytes
-  - `MSGLint` (int) - Message length
-  - `MSG` (bytes) - UTF-8 encoded message
-  - `CRCint` (int) - CRC value
-- **Returns:** The function currently returns a reference to `framebuilder` itself (not the frame)
-- **Side effects:** Prints type information and the constructed frame bytes to stdout
+**Example:** `"Hello world!"` (12 bytes) → `54 54 50 30 0C 48 65 6C 6C 6F 20 77 6F 72 6C 64 21 1A 2B`
 
-## Usage
+---
 
-The program reads a message from standard input, validates it, and builds a TTP0 frame.
+## What's In The Code
 
-### Input
-- A text message via stdin (maximum 31 characters)
+### `src/main.py` — The Whole Thing (~80 lines)
 
-### Output
-- Type information debug prints
-- The constructed frame as bytes
+| Part | What It Does |
+|------|--------------|
+| `CRC16` class | Lookup-table CRC-16/IBM (poly `0xA001`). Fast, standard. |
+| `NoChars` | Exception for empty messages. |
+| `checkbuffer(len)` | Throws if length is 0. |
+| `framebuildernocrc(...)` | Builds frame *without* CRC (used to calculate the CRC). |
+| `framebuilder(...)` | Builds the full frame **but has a bug** (returns the function, not the frame). |
+| Bottom 20 lines | Demo: reads stdin, frames it, prints debug info. |
 
-## Constraints
+### `src/text.txt` — Just a Sample
 
-- Maximum message length: 31 characters (1 byte limits payload length to 0-255, but the code enforces 31)
-- Empty messages are rejected with `NoChars` exception
-- CRC is currently a fixed placeholder value
+```
+Hello world!!!!!!!!!!!!!!!!!!
+I am soooo exiteddd
+```
 
-## Source Files
+Not used by the code. Just sits there.
 
-- `src/main.py` - Protocol implementation
-- `src/text.txt` - Sample text data
+---
+
+## Known Bugs (Patches Welcome)
+
+1. **Line 57**: `return framebuilder` → should be `return frame`
+2. **Line 43**: `return MESSAGE` → `MESSAGE` doesn't exist in that scope
+3. **31-char warning** is misleading — protocol supports 255 bytes (1-byte length)
+
+---
+
+## Try It
+
+```bash
+cd /home/zxldsh/Documents/real_projects/assembly
+python src/main.py
+```
+
+Type: `Hi there!`
+
+Output:
+```
+b'TTP0\x09Hi there!'
+<class 'bytes'>
+<class 'int'>
+<class 'bytes'>
+<class '__main__.CRC16'>
+you can only put 31 characters in the buffer
+
+b'TTP0\x09Hi there!\x8f\xc3'
+```
+
+The last line is your framed message with CRC appended.
+
+---
+
+## Extending It (Ideas)
+
+### Add a Parser
+
+```python
+def parse_ttp0(frame: bytes) -> str:
+    if frame[:4] != b"TTP0":
+        raise ValueError("Bad magic")
+    length = frame[4]
+    payload = frame[5:5+length]
+    got_crc = int.from_bytes(frame[5+length:7+length], "big")
+    
+    crc = CRC16()
+    crc.update(frame[:5+length])
+    if crc.digest() != got_crc:
+        raise ValueError("CRC mismatch")
+    
+    return payload.decode("utf-8")
+```
+
+### Support Bigger Messages
+
+Change `to_bytes(1, "big")` → `to_bytes(2, "big")` for 64KB payloads.
+
+### Add Message Types
+
+First payload byte = type:
+```
+TTP0 | len | type | payload... | CRC
+```
+
+---
+
+## Philosophy
+
+> **Make it work, make it right, make it fast.** — Kent Beck
+
+This is *make it work* stage. It teaches the bones of every protocol you'll ever meet: **magic, length, payload, checksum**. HTTP, MQTT, CAN, USB — same skeleton, more flesh.
+
+---
+
+## License
+
+None. Public domain vibes. Copy, break, learn.
+
+---
+
+*Built for curiosity. Not for production.*
+
+---
+
+> **Note:** This README was generated by an AI assistant. The code in `src/main.py` and `src/text.txt` is human-written.
