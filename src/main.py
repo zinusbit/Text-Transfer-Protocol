@@ -36,11 +36,23 @@ class CRC16: #taken from a old project.
 
 class NoChars(Exception):
     pass
+class MacChars(Exception):
+    pass
 
-def checkbuffer(MSGLEN):
-    if MSGLEN == 0:
-        raise NoChars("No Chars in the buffer")
-    return MESSAGE
+class checkbuffer:
+    def __init__(self, MSGLEN):
+        self.MSGLEN = MSGLEN
+        self.MESSAGE = MESSAGE
+
+    def checknochars(self):
+        if self.MSGLEN == 0:
+            raise NoChars("No Chars in the buffer")
+        return self.MESSAGE
+    
+    def checkmaxchars(self):
+        if self.MSGLEN > 31:
+            raise MacChars("Maximum number of chars exceeded")
+        return self.MESSAGE
 
 def framebuildernocrc(PRTV, MSGLint, MSG):
     MSGLbytes = MSGLint.to_bytes(1, byteorder="big")
@@ -56,6 +68,7 @@ def framebuilder(PRTV, MSGLint, MSG, CRCint_high, CRCint_low):
     print(frame)
     return framebuilder
 
+# parameters
 PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
 MESSAGE = input()
 UTF8MSG = MESSAGE.encode("utf-8")
@@ -68,13 +81,20 @@ value = CRC.digest()
 CRC_high = (value >> 8) & 0xFF
 CRC_low  = value & 0xFF
 
-print(type(PROTOCOL_VERSION))
+#all debug info
+print(type(PROTOCOL_VERSION)) 
 print(type(MSGLEN))
 print(type(UTF8MSG))
 print(type(CRC))
-print("you can only put 31 characters in the buffer\n")
-checkbuffer(MSGLEN)
 
+print("you can only put 31 characters in the buffer\n")
+
+#check the chars in the buffer
+ChkBuff = checkbuffer(MSGLEN) 
+ChkBuff.checkmaxchars()
+ChkBuff.checknochars()
+
+#build frame
 framebuilder(PROTOCOL_VERSION, MSGLEN, UTF8MSG, CRC_high, CRC_low)
 
 
