@@ -1,5 +1,11 @@
-class CRC16: #taken from a old project.
+# All """placeholder""" is AI generated but the code base is not
+
+
+class CRC16:
+    """CRC-16/IBM implementation with lookup table."""
+
     def __init__(self, polynomial=0xA001, init=0xFFFF, xor_out=0x0000):
+        """Initialize CRC with polynomial, initial value, and output XOR."""
         self.polynomial = polynomial
         self.init = init
         self.xor_out = xor_out
@@ -9,9 +15,11 @@ class CRC16: #taken from a old project.
         self.reset()
 
     def reset(self):
+        """Reset CRC to initial value."""
         self.crc = self.init
 
     def _make_table(self):
+        """Generate 256-entry lookup table for fast CRC calculation."""
         table = []
         for i in range(256):
             crc = i
@@ -24,58 +32,74 @@ class CRC16: #taken from a old project.
         return table
 
     def update(self, data: bytes):
+        """Update CRC with new data bytes."""
         for b in data:
             self.crc = self.table[(self.crc ^ b) & 0xFF] ^ (self.crc >> 8)
             self.crc &= self.mask
 
     def digest(self):
+        """Return final CRC value as integer."""
         return self.crc ^ self.xor_out
 
     def hexdigest(self):
+        """Return final CRC value as 4-digit hex string."""
         return f"{self.digest():04X}"
 
 class NoChars(Exception):
+    """Raised when message buffer is empty."""
     pass
 class MacChars(Exception):
+    """Raised when message exceeds maximum length."""
     pass
 
 class checkbuffer:
+    """Validate message length constraints."""
+
     def __init__(self, MSGLEN):
         self.MSGLEN = MSGLEN
         self.MESSAGE = MESSAGE
 
     def checknochars(self):
+        """Raise NoChars if message length is zero."""
         if self.MSGLEN == 0:
             raise NoChars("No Chars in the buffer")
         return self.MESSAGE
     
     def checkmaxchars(self):
+        """Raise MacChars if message exceeds 31 bytes."""
         if self.MSGLEN > 31:
             raise MacChars("Maximum number of chars exceeded")
         return self.MESSAGE
 
-def framebuildernocrc(PRTV, MSGLint, MSG):
+def framebuildernocrc(PRTV, MSGLint, TYPE, MSG):
+    """Build TTP0 frame without CRC (for CRC calculation)."""
     MSGLbytes = MSGLint.to_bytes(1, byteorder="big")
-    frame = PRTV + MSGLbytes + MSG #prot_version, msg length, msg
+    TYPEbytes = TYPE.to_bytes(1, byteorder="big")
+    frame = PRTV + MSGLbytes + TYPEbytes + MSG
     print(frame)
     return frame
 
-def framebuilder(PRTV, MSGLint, MSG, CRCint_high, CRCint_low):
+def framebuilder(PRTV, MSGLint, TYPE, MSG, CRCint_high, CRCint_low):
+    """Build complete TTP0 frame with CRC bytes appended."""
     MSGLbytes = MSGLint.to_bytes(1, byteorder="big")
+    TYPEbytes = TYPE.to_bytes(1, byteorder="big")
     CRCbytes_high = CRCint_high.to_bytes(1, byteorder="big")
     CRCbytes_low = CRCint_low.to_bytes(1, byteorder="big")
-    frame = PRTV + MSGLbytes + MSG + CRCbytes_high + CRCbytes_low #prot_version, msg length, msg, crc
+    frame = PRTV + MSGLbytes + TYPEbytes + MSG + CRCbytes_high + CRCbytes_low
     print(frame)
     return framebuilder
+
+
 
 # parameters
 PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
 MESSAGE = input()
 UTF8MSG = MESSAGE.encode("utf-8")
 MSGLEN = len(MESSAGE)
+TYPE = 0x04
 
 CRC = CRC16()
-CRC.update(framebuildernocrc(PROTOCOL_VERSION, MSGLEN, UTF8MSG))
+CRC.update(framebuildernocrc(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG))
 value = CRC.digest()
 
 CRC_high = (value >> 8) & 0xFF
@@ -87,14 +111,14 @@ print(type(MSGLEN))
 print(type(UTF8MSG))
 print(type(CRC))
 
-print("you can only put 31 characters in the buffer\n")
+print("you can only put 31 bytes in the buffer\n")
 
-#check the chars in the buffer
+#check the bytes in the buffer
 ChkBuff = checkbuffer(MSGLEN) 
 ChkBuff.checkmaxchars()
 ChkBuff.checknochars()
 
 #build frame
-framebuilder(PROTOCOL_VERSION, MSGLEN, UTF8MSG, CRC_high, CRC_low)
+framebuilder(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG, CRC_high, CRC_low)
 
 
