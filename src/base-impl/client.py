@@ -1,40 +1,49 @@
 import transmitter as tx
 import reciever as rx
+import socket as socket
+import errcheck as errchk
 
 # parameters for tx
-PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
-MESSAGE = input()
-UTF8MSG = MESSAGE.encode("utf-8")
-MSGLEN = len(MESSAGE)
-TYPE = 0x04
+HOST = "127.0.0.1"
+PORT = 65432
 
 
-#tx
-CRC = tx.CRC16()
-CRC.update(tx.framebuildernocrc(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG))
-value = CRC.digest()
+#send data
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.connect((HOST, PORT))
+    while True:
+      PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
+      message = input()
+      utf8msg = message.encode("utf-8")
+      msglen = len(message)
+      type = 0x04
+      #tx
+      crc = tx.CRC16()
+      crc.update(tx.framebuildernocrc(PROTOCOL_VERSION, msglen, type, utf8msg))
+      value = crc.digest()
 
-CRC_high = (value >> 8) & 0xFF
-CRC_low  = value & 0xFF
+      CRC_high = (value >> 8) & 0xFF
+      CRC_low  = value & 0xFF
 
-#all debug info
-print(type(PROTOCOL_VERSION)) 
-print(type(MSGLEN))
-print(type(UTF8MSG))
-print(type(CRC))
+      #all debug info
+      # print(type(PROTOCOL_VERSION)) 
+      # print(type(msglen))
+      # print(type(utf8msg))
+      # print(type(crc))
 
-print("you can only put 31 bytes in the buffer\n")
+      print("you can only put 31 bytes in the buffer\n")
 
-#check the bytes in the buffer
-ChkBuff = tx.checkbuffer(MSGLEN) 
-ChkBuff.checkmaxchars()
-ChkBuff.checknochars()
+      #check the bytes in the buffer
+      ChkBuff = errchk.checkbuffer(msglen) 
+      ChkBuff.checkmaxchars()
+      ChkBuff.checknochars()
 
-#build frame
-DATArx = tx.framebuilder(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG, CRC_high, CRC_low)
+      DATArx = tx.framebuilder(PROTOCOL_VERSION, msglen, type, utf8msg, CRC_high, CRC_low)
 
-#rx
-PRTVrx, MSGLENrx, TYPErx, UTF8MSGrx, CRCrx, FRAMErx = rx.parser(DATArx, True)
-packet_status, CRC_high, CRC_low = rx.check_crc(PRTVrx + [MSGLENrx] + [TYPErx] + UTF8MSGrx, CRCrx, True)
-
-print(packet_status, "\n")
+      s.sendall(DATArx)
+      data = s.recv(1024)
+      if data == b'\x01':
+           print("data sucessfully sent")
+      elif data == b'\x02':
+           print("data frame bad... closing.")
+           break
