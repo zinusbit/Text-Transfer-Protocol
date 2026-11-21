@@ -6,14 +6,16 @@
 
 ## TL;DR
 
-This is a **toy protocol** that wraps a text message in a binary frame:
+TTP0 wraps a text message in a binary frame and sends it over a raw TCP socket:
 
 ```
-TTP0 + length + your-text + CRC16
+TTP0 + length + Type + your-text + CRC16
 ```
 
-**Transmitter:** `python src/transmitter.py`  
-**Receiver:** `python src/reciever.py` (uses hardcoded example frame)
+**Client:** `python src/base-impl/client.py`  
+**Server:** `python src/base-impl/server.py`
+
+Run the server first, then the client. Type a message, hit enter, the server parses it, verifies the CRC, and replies with `ACK` (`b'1'`) or `NACK` (`b'2'`).
 
 ---
 
@@ -21,31 +23,33 @@ TTP0 + length + your-text + CRC16
 
 Someone wanted to understand how real protocols work under the hood. So they built the simplest possible thing that still has:
 
-- **A magic number** — so receivers know "this is TTP0, not JSON or protobuf"
-- **A length field** — so you know when the message ends
-- **A checksum (CRC-16)** — so you can detect corruption
+- **A magic number** — `0x54 0x54 0x50 0x30` ("TTP0") so receivers know this is TTP0, not JSON or protobuf
+- **A length field** — 1 byte so you know when the message ends (max 255 bytes)
+- **A message type byte** — so you can distinguish commands from data
+- **A checksum (CRC-16/IBM)** — so you can detect corruption
 
-That's it. No headers, no handshakes, no retries. Just framing.
+That's it. No headers, no handshakes, no retries. Just framing over TCP.
 
 ---
 
 ## The Frame (On the Wire)
 
 ```
-┌─────────────┬───────┬────────────┬──────────┐
-│  "TTP0"     │ len   │  payload   │  CRC16   │
-│  (4 bytes)  │(1 B)  │  (N bytes) │ (2 bytes)│
-└─────────────┴───────┴────────────┴──────────┘
+┌─────────────┬───────┬──────────┬────────────┬──────────┐
+│  "TTP0"     │ len   │  TYPE    │  payload   │  CRC16   │
+│  (4 bytes)  │(1 B)  │  (1 B)   │  (N bytes) │ (2 bytes)│
+└─────────────┴───────┴──────────┴────────────┴──────────┘
 ```
 
 | Bytes | Meaning |
 |-------|---------|
 | `54 54 50 30` | ASCII `"TTP0"` — protocol ID |
-| `0C` | Length = 12 bytes |
-| `48 65 6C 6C 6F...` | Your UTF-8 text |
-| `1A 2B` | CRC-16 (big-endian) |
+| `0C` | Length of payload in bytes (big-endian, max 255) |
+| `04` | Message type byte |
+| `48 65 6C 6C 6F...` | Your UTF-8 text payload |
+| `1A 2B` | CRC-16 (big-endian: high byte first, then low byte) |
 
-**Example:** `"Hello world!"` (12 bytes) → `54 54 50 30 0C 48 65 6C 6C 6F 20 77 6F 72 6C 64 21 1A 2B`
+**Example:** `"Hi"` (type `0x04`) → `54 54 50 30 02 04 48 69 <CRC_hi> <CRC_lo>`
 
 ---
 
@@ -53,132 +57,99 @@ That's it. No headers, no handshakes, no retries. Just framing.
 
 ```
 assembly/
-├── src/
-│   ├── main.py         # Original minimal transmitter (reads stdin)
-│   ├── transmitter.py  # Enhanced transmitter with validation class
-│   └── reciever.py     # Receiver/parser with CRC verification
-└── README.md           # This file
+├── LICENSE                       # GNU GPL v3
+├── README.md                     # This file
+└── src/
+    └── base-impl/
+        ├── transmitter.py        # CRC16 class + frame builders
+        ├── reciever.py           # CRC16 class + parser + CRC checker
+        ├── errcheck.py           # NoChars / MacChars exceptions + checkbuffer
+        ├── client.py             # TCP client: builds frame, sends over socket
+        └── server.py             # TCP server: receives frame, parses, CRC checks, ACK/NACK
 ```
 
 ---
 
-## Transmitter (`src/transmitter.py`)
+## Components
 
-Enhanced version with a `checkbuffer` class that validates:
+### `src/base-impl/transmitter.py`
 
-- **Empty messages** → raises `NoChars`
-- **Over 31 chars** → raises `MacChars` (note: protocol supports 255)
+| Name | Purpose |
+|------|---------|
+| `CRC16` | CRC-16/IBM with 256-entry lookup table |
+| `framebuildernocrc(PRTV, MSGLint, TYPE, MSG)` | Builds `TTP0 + length + type + payload` (no CRC) — used to compute the checksum |
+| `framebuilder(PRTV, MSGLint, TYPE, MSG, CRCint_high, CRCint_low)` | Builds complete TTP0 frame with CRC bytes appended |
 
-```bash
-python src/transmitter.py
-# type a message, hit enter
-```
+### `src/base-impl/reciever.py`
 
-Output shows debug types + final frame with CRC.
+| Name | Purpose |
+|------|---------|
+| `CRC16` | Same CRC-16/IBM implementation as transmitter |
+| `parser(data, show_debug)` | Splits a raw frame into protocol version, type, length, payload, CRC bytes |
+| `check_crc(received_frame, received_crc, show_debug)` | Recomputes CRC over the frame and compares against received CRC |
 
----
+### `src/base-impl/errcheck.py`
 
-## Receiver (`src/reciever.py`)
+| Name | Purpose |
+|------|---------|
+| `NoChars` | Exception raised when message length is 0 |
+| `MacChars` | Exception raised when message exceeds 31 bytes |
+| `checkbuffer(MSGLEN)` | Validates length constraints with `checknochars()` and `checkmaxchars()` |
 
-Parses a hardcoded example frame (`EXAMPLE_DATA`) and verifies the CRC.
+### `src/base-impl/client.py`
 
-```python
-EXAMPLE_DATA = b'TTP0\x0chelaspafspaft-'
-```
+- Connects to `127.0.0.1:65432` over TCP
+- Reads input from stdin, encodes as UTF-8
+- Validates length via `errcheck.checkbuffer`
+- Computes CRC-16 over `TTP0 + length + type + payload`
+- Sends full frame over the socket
+- Waits for `b'\x01'` (ACK) or `b'\x02'` (NACK) from server
 
-Run it:
-```bash
-python src/reciever.py
-```
+### `src/base-impl/server.py`
 
-Output:
-```
-length of frame  18
-protocol version  [84, 84, 80, 48]
-msg length  12
-msg  [104, 101, 108, 97, 115, 112, 97, 102, 115, 112, 97, 102, 116, 45]
-crc  [45, 45]
-...
-PACKET BAD... DROPPING.
-False
-```
-
-> **Note:** The example frame has a bad CRC (intentional? typo?), so it correctly reports "PACKET BAD".
-
-### Key Functions
-
-| Function | Purpose |
-|----------|---------|
-| `parser(data, show_debug)` | Splits frame into protocol, length, payload, CRC |
-| `check_crc(received_frame, received_crc, show_debug)` | Recomputes CRC and compares |
+- Listens on `127.0.0.1:65432`
+- Accepts one TCP connection
+- Receives bytes, parses them with `reciever.parser()`
+- Verifies CRC with `reciever.check_crc()`
+- Sends `ACK = b'1'` if packet is good, `NACK = b'2'` if bad
 
 ---
 
 ## CRC-16/IBM
 
-Both files include the same `CRC16` class:
+Both `transmitter.py` and `reciever.py` include the same `CRC16` class:
 
 | Param | Value | Meaning |
 |-------|-------|---------|
-| `polynomial` | `0xA001` | Reversed `0x8005` |
-| `init` | `0xFFFF` | Starting value |
-| `xor_out` | `0x0000` | Final XOR |
+| `polynomial` | `0xA001` | Generator polynomial (reversed `0x8005`) |
+| `init` | `0xFFFF` | Starting CRC value |
+| `xor_out` | `0x0000` | Final XOR applied to the CRC |
 
 Lookup-table implementation for speed.
 
----
-
-## Known Bugs / Quirks
-
-| Issue | Location |
-|-------|----------|
-| `framebuilder` returns the function, not the frame | `transmitter.py:69`, `main.py:57` |
-| `checkbuffer.__init__` references undefined `MESSAGE` | `transmitter.py:45` |
-| "31 char" limit is arbitrary (protocol allows 255) | `transmitter.py:53` |
-| Receiver uses hardcoded frame, not stdin/socket | `reciever.py:1` |
-| Spelling: "reciever" → should be "receiver" | filename |
-| Example frame CRC doesn't match | `reciever.py:1` |
+Typical use:
+```python
+crc = CRC16()
+crc.update(frame_without_crc)
+value = crc.digest()      # int, 0..65535
+crc.hexdigest()           # e.g. "8F3A"
+```
 
 ---
 
 ## Try It
 
-**Transmitter:**
+**Terminal 1 — Start the server:**
 ```bash
-python src/transmitter.py
-# type: Hi there!
-# see framed output
+python src/base-impl/server.py
 ```
 
-**Receiver (with a valid frame):**
-```python
-# First, get a valid frame from transmitter
-# Then paste it into reciever.py EXAMPLE_DATA
-python src/reciever.py
+**Terminal 2 — Start the client:**
+```bash
+python src/base-impl/client.py
 ```
 
----
-
-## Extending It (Ideas)
-
-### Make Receiver Read from Stdin/Socket
-
-```python
-import sys
-frame = sys.stdin.buffer.read()
-# or: sock.recv(1024)
-```
-
-### Support Bigger Messages
-
-Change `to_bytes(1, "big")` → `to_bytes(2, "big")` for 64KB payloads.
-
-### Add Message Types
-
-First payload byte = type:
-```
-TTP0 | len | type | payload... | CRC
-```
+Type a message (max 31 bytes) and hit enter. The server will print the parsed frame and reply with ACK or NACK.
 
 ---
 
@@ -192,8 +163,8 @@ This is *make it work* stage. It teaches the bones of every protocol you'll ever
 
 ## License
 
-None. Public domain vibes. Copy, break, learn.
+GNU General Public License v3.0. See `LICENSE` for details.
 
 ---
 
-> **Note:** This README was generated by an AI assistant. The code in `src/` is human-written.
+> **Note:** This README was generated by an AI assistant. The code in `src/base-impl/` is human-written.
