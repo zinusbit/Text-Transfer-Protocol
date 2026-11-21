@@ -1,7 +1,5 @@
 # All """placeholder""" is AI generated but the code base is not
 
-EXAMPLE_DATA = b'TTP0\x0c\x04ifowoeruoweu\x13\xee'
-
 class CRC16:
     """CRC-16/IBM implementation with lookup table."""
 
@@ -95,11 +93,5 @@ def check_crc(recieved_frame, recieved_crc, show_debug):
         print(packet_status)
 
     return packet_status, CRC_high, CRC_low
-
-PRTV, MSGLEN, TYPE, UTF8MSG, CRC, FRAME = parser(EXAMPLE_DATA, True)
-packet_status, CRC_high, CRC_low = check_crc(PRTV + [MSGLEN] + [TYPE] + UTF8MSG, CRC, True)
-
-print(packet_status)
-# print("Full Frame", PRTV, MSGLEN, UTF8MSG, CRC, "\n")
 
 

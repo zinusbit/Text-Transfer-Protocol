@@ -57,19 +57,18 @@ class checkbuffer:
 
     def __init__(self, MSGLEN):
         self.MSGLEN = MSGLEN
-        self.MESSAGE = MESSAGE
 
     def checknochars(self):
         """Raise NoChars if message length is zero."""
         if self.MSGLEN == 0:
             raise NoChars("No Chars in the buffer")
-        return self.MESSAGE
+        return 0
     
     def checkmaxchars(self):
         """Raise MacChars if message exceeds 31 bytes."""
         if self.MSGLEN > 31:
             raise MacChars("Maximum number of chars exceeded")
-        return self.MESSAGE
+        return 0
 
 def framebuildernocrc(PRTV, MSGLint, TYPE, MSG):
     """Build TTP0 frame without CRC (for CRC calculation)."""
@@ -87,38 +86,7 @@ def framebuilder(PRTV, MSGLint, TYPE, MSG, CRCint_high, CRCint_low):
     CRCbytes_low = CRCint_low.to_bytes(1, byteorder="big")
     frame = PRTV + MSGLbytes + TYPEbytes + MSG + CRCbytes_high + CRCbytes_low
     print(frame)
-    return framebuilder
+    return frame
 
-
-
-# parameters
-PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
-MESSAGE = input()
-UTF8MSG = MESSAGE.encode("utf-8")
-MSGLEN = len(MESSAGE)
-TYPE = 0x04
-
-CRC = CRC16()
-CRC.update(framebuildernocrc(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG))
-value = CRC.digest()
-
-CRC_high = (value >> 8) & 0xFF
-CRC_low  = value & 0xFF
-
-#all debug info
-print(type(PROTOCOL_VERSION)) 
-print(type(MSGLEN))
-print(type(UTF8MSG))
-print(type(CRC))
-
-print("you can only put 31 bytes in the buffer\n")
-
-#check the bytes in the buffer
-ChkBuff = checkbuffer(MSGLEN) 
-ChkBuff.checkmaxchars()
-ChkBuff.checknochars()
-
-#build frame
-framebuilder(PROTOCOL_VERSION, MSGLEN, TYPE, UTF8MSG, CRC_high, CRC_low)
 
 
