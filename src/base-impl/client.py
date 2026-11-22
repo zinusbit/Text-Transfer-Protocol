@@ -15,7 +15,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
       PROTOCOL_VERSION = bytes([0x54, 0x54, 0x50, 0x30]) #TTP0 (texttransfer protocol v0)
       message = input()
       utf8msg = message.encode("utf-8")
-      msglen = len(message)
+      msglen = len(utf8msg)
       type = 0x04
       #tx
       crc = tx.CRC16()

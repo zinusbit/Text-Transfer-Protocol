@@ -4,8 +4,8 @@ import errcheck as errchk
 
 HOST = "127.0.0.1"  # Localhost
 PORT = 65432        # Non-privileged port (> 1023)
-ACK = b'1'
-NACK = b'2'
+ACK = b'\x01'
+NACK = b'\x02'
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
@@ -26,4 +26,3 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if not data:
                 print("badframe...")
                 conn.sendall(NACK)
-            conn.sendall(ACK)
