@@ -46,4 +46,4 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
            print("data sucessfully sent")
       elif data == b'\x02':
            print("data frame bad... closing.")
-           break
+           # resendframe()
