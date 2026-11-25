@@ -63,5 +63,13 @@ def framebuilder(PRTV, MSGLint, TYPE, MSG, CRCint_high, CRCint_low):
     print(frame)
     return frame
 
+def fulltcpframebuilder(listed_data, debug_mode):
+    frameLenBytes = 4 + len(listed_data)
+    full_frame = frameLenBytes + listed_data
+    if debug_mode == True:
+        print(frameLenBytes, full_frame)
+
+    return full_frame
+
 
 

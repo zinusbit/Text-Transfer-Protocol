@@ -37,11 +37,13 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
       ChkBuff = errchk.checkbuffer(msglen) 
       ChkBuff.checkmaxchars()
       ChkBuff.checknochars()
-
+      
       DATArx = tx.framebuilder(PROTOCOL_VERSION, msglen, type, utf8msg, CRC_high, CRC_low)
 
-      s.sendall(DATArx)
-      data = s.recv(1024)
+      length_prefix = len(DATArx).to_bytes(4, byteorder="big")
+      s.sendall(length_prefix + DATArx)
+
+      data = s.recv(1)
       if data == b'\x01':
            print("data sucessfully sent")
       elif data == b'\x02':
