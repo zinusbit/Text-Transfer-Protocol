@@ -1,5 +1,7 @@
 ## Known Bugs / Quirks
 
+Issues with 6d331916662f9a7c0ca7296611dd55d1d645ddd7: fixed
+
 | Issue | Location | Status |
 |-------|----------|--------|
 | Server sends `ACK` twice (line 25 and line 29) | `server.py` | fixed |
@@ -7,7 +9,7 @@
 | `msglen = len(message)` counts characters, not UTF-8 bytes — multi-byte chars break the length field | `client.py:18` | fixed |
 | `checknochars()` and `checkmaxchars()` return `0` instead of the message | `errcheck.py:18,24` | fixed |
 | Server accepts one connection then exits | `server.py` | fixed |
-| No TCP framing/length-prefix — `recv(1024)` can split or merge frames | `client.py`, `server.py` | waitng to be fixed
+| No TCP framing/length-prefix — `recv(1024)` can split or merge frames | `client.py`, `server.py` | fixed |
 | Spelling: `reciever.py` → should be `receiver.py` | filename | too lazy to fix (not fixed) |
 
 ---

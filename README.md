@@ -6,16 +6,16 @@
 
 ## TL;DR
 
-TTP0 wraps a text message in a binary frame and sends it over a raw TCP socket:
+TTP0 wraps a text message in a binary frame, prefixes it with a 4-byte TCP length header, and sends it over a raw TCP socket:
 
 ```
-TTP0 + length + Type + your-text + CRC16
+[4-byte TCP length] + TTP0 + length + Type + your-text + CRC16
 ```
 
 **Client:** `python src/base-impl/client.py`  
 **Server:** `python src/base-impl/server.py`
 
-Run the server first, then the client. Type a message, hit enter, the server parses it, verifies the CRC, and replies with `ACK` (`b'1'`) or `NACK` (`b'2'`).
+Run the server first, then the client. Type a message, hit enter, the server parses it, verifies the CRC, and replies with `ACK` (`b'\x01'`) or `NACK` (`b'\x02'`).
 
 ---
 
@@ -34,6 +34,16 @@ That's it. No headers, no handshakes, no retries. Just framing over TCP.
 
 ## The Frame (On the Wire)
 
+TCP layer (length-prefix framing):
+
+```
+┌─────────────────────┐
+│  TCP length prefix  │  4 bytes, big-endian = length of the TTP0 frame below
+└─────────────────────┘
+```
+
+TTP0 frame (inside the TCP length prefix):
+
 ```
 ┌─────────────┬───────┬──────────┬────────────┬──────────┐
 │  "TTP0"     │ len   │  TYPE    │  payload   │  CRC16   │
@@ -41,15 +51,25 @@ That's it. No headers, no handshakes, no retries. Just framing over TCP.
 └─────────────┴───────┴──────────┴────────────┴──────────┘
 ```
 
+So the full wire format is:
+
+```
+┌─────────────────────┬─────────────┬───────┬──────────┬────────────┬──────────┐
+│  TCP length (4 B)   │  "TTP0"     │ len   │  TYPE    │  payload   │  CRC16   │
+│  big-endian         │  (4 bytes)  │(1 B)  │  (1 B)   │  (N bytes) │ (2 bytes)│
+└─────────────────────┴─────────────┴───────┴──────────┴────────────┴──────────┘
+```
+
 | Bytes | Meaning |
 |-------|---------|
+| `00 00 00 0C` | TCP length prefix — number of bytes in the TTP0 frame that follows (big-endian, 4 bytes) |
 | `54 54 50 30` | ASCII `"TTP0"` — protocol ID |
 | `0C` | Length of payload in bytes (big-endian, max 255) |
 | `04` | Message type byte |
 | `48 65 6C 6C 6F...` | Your UTF-8 text payload |
 | `1A 2B` | CRC-16 (big-endian: high byte first, then low byte) |
 
-**Example:** `"Hi"` (type `0x04`) → `54 54 50 30 02 04 48 69 <CRC_hi> <CRC_lo>`
+**Example:** `"Hi"` (type `0x04`) → `00 00 00 0B 54 54 50 30 02 04 48 69 <CRC_hi> <CRC_lo>`
 
 ---
 
@@ -107,11 +127,12 @@ assembly/
 
 ### `src/base-impl/server.py`
 
-- Listens on `127.0.0.1:65432`
-- Accepts one TCP connection
-- Receives bytes, parses them with `reciever.parser()`
+- Listens on `127.0.0.1:65432` with `SO_REUSEADDR` so the port can be rebound immediately after a restart
+- Accepts TCP connections in a loop
+- For each connection, accumulates bytes into a buffer and applies **length-prefix framing**: reads a 4-byte big-endian length, waits until the full frame is present, then slices it out
+- Parses each frame with `reciever.parser()`
 - Verifies CRC with `reciever.check_crc()`
-- Sends `ACK = b'1'` if packet is good, `NACK = b'2'` if bad
+- Sends `ACK = b'\x01'` if packet is good, `NACK = b'\x02'` if bad
 
 ---
 
@@ -134,6 +155,26 @@ crc.update(frame_without_crc)
 value = crc.digest()      # int, 0..65535
 crc.hexdigest()           # e.g. "8F3A"
 ```
+
+---
+
+## TCP Framing
+
+TCP is a byte stream, not a message protocol — a single `recv()` can return half a frame, one full frame, or multiple frames back-to-back. TTP0 handles this with a **length-prefix framing** layer:
+
+**Sender (`client.py`):**
+1. Build the TTP0 frame (`TTP0 + len + type + payload + CRC16`).
+2. Prepend `len(frame).to_bytes(4, "big")` — a 4-byte big-endian length.
+3. `sendall` the combined bytes.
+
+**Receiver (`server.py`):**
+1. Append every `recv()` chunk to a persistent `buffer`.
+2. While the buffer has at least 4 bytes, read the first 4 as a big-endian `frame_len`.
+3. If fewer than `4 + frame_len` bytes are buffered, wait for more data.
+4. Otherwise, slice out `buffer[4:4+frame_len]` as one complete frame and trim the buffer.
+5. Parse and CRC-check that frame; repeat for any additional frames already in the buffer.
+
+This guarantees frame boundaries are preserved regardless of how TCP segments the data.
 
 ---
 
